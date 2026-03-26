@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.pyd
+*.egg-info/
+.build/
+dist/
+build/
+/results/12EeV/
+/results/14EeV/
+/results/15EeV/
+/results/16EeV/
+# Virtual envs
+.venv/
+venv/
+
+# Jupyter & caches
+.ipynb_checkpoints/
+.pytest_cache/
+

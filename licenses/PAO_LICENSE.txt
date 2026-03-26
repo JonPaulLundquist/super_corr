@@ -1,0 +1,26 @@
+Disclaimer
+
+- The Open Data are released under the (CC BY-SA 4.0) International License.
+- All datasets have a unique DOI that you are requested to cite in any applications or publications (10.5281/zenodo.10488964).
+- The Auger Collaboration does not endorse any work, scientific or otherwise, produced using these data, even if available on, or linked from, this portal.
+- The spreadsheet-based datasets allow the user to undertake basic analyses. More complex analyses however require some knowledge of the underlying physics and of the instruments.
+- The analysis methods, including the reconstruction of the data, have evolved over time, and will continue to evolve. The reconstructed Open Data are processed with the most up-to-date software. Updates are   	thus foreseen, for either the reconstructed data or the software needed to analyse them. These will be detailed in later releases.
+- If you are interested in joining or working with the Auger Collaboration, please contact auger-join-request@auger.unam.mx.
+
+https://creativecommons.org/licenses/by-sa/4.0/
+
+Attribution-ShareAlike 4.0 International (CC BY-SA 4.0)
+
+You are free to:
+	Share — copy and redistribute the material in any medium or format for any purpose, even commercially.
+	Adapt — remix, transform, and build upon the material for any purpose, even commercially.
+	The licensor cannot revoke these freedoms as long as you follow the license terms.
+Under the following terms:
+	Attribution — You must give appropriate credit, provide a link to the license, and indicate if changes were made. You may do so in any reasonable manner, but not in any way that suggests the licensor 	endorses you or your use.
+	ShareAlike — If you remix, transform, or build upon the material, you must distribute your contributions under the same license as the original.
+	No additional restrictions — You may not apply legal terms or technological measures that legally restrict others from doing anything the license permits.
+
+Notices:
+You do not have to comply with the license for elements of the material in the public domain or where your use is permitted by an applicable exception or limitation.
+
+No warranties are given. The license may not give you all of the permissions necessary for your intended use. For example, other rights such as publicity, privacy, or moral rights may limit how you use the material.
