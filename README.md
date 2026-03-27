@@ -37,7 +37,6 @@ https://opendata.auger.org/
   rank correlation.
 
 
-
 ## Pre-requisite Installations
 The library targets Python 3.8+.
 
@@ -134,6 +133,23 @@ python src/super_corr.py --mc-pvalues --pvals-out results/pvals_custom.txt
 # All custom directories
 python src/super_corr.py --mc-pvalues --data-npz results/custom_data.npz --mc-npz results/custom_mc.npz --pvals-out results/custom_pvals.txt
 ```
+
+## Command-Line Flags
+Use `python src/super_corr.py --help` for the current CLI help output.
+
+| Flag | Type / Default | What it does |
+|---|---|---|
+| `--figures [NPZ_PATH]` | Optional arg / `False` | Recreate figures from an existing results `.npz`. If no path is provided, uses default results file. |
+| `--mc-trials N` | `int` / `0` | Run `N` isotropic MC trials and save per-trial statistics (`a`, `y0`, `R2`). No figures or per-trial scan files. |
+| `--mc-out PATH` | `str` / `results/mc_stats.npz` | Output path for MC trial statistics `.npz` when using `--mc-trials`. |
+| `--iso` | flag / `False` | Run a single isotropic MC scan (with figures). |
+| `--seed SEED` | `int` / `None` | Seed for isotropic modes (`--iso`) or base seed for `--mc-trials`. If omitted for MC trials, entropy-based random seeding is used. |
+| `--results-dir DIR` | `str` / `results/` | Directory for figures and `super_corr.npz` in single-run modes (`data` or `--iso`). |
+| `--no-save` | flag / `False` | Do not write `super_corr.npz` in single-run modes (figures can still be generated). |
+| `--mc-pvalues` | flag / `False` | Compute MC p-values from data and MC `.npz` files; writes `results/mc_pvalues.txt` by default. |
+| `--data-npz PATH` | `str` / `results/super_corr.npz` | Input data `.npz` path for `--mc-pvalues`. |
+| `--mc-npz PATH` | `str` / `results/mc_stats.npz` | Input MC `.npz` path for `--mc-pvalues`. |
+| `--pvals-out PATH` | `str` / `results/mc_pvalues.txt` | Output text path for `--mc-pvalues`. |
 
 ## Licensing and Data Provenance
 The code in this repository is released under the MIT License, while the included Pierre Auger Observatory Open Data is distributed under CC BY-SA 4.0. If you use or redistribute this project, you should preserve the MIT notice for the software and the attribution/share-alike terms that apply to the dataset. Third-party attribution details are summarized in [`THIRD_PARTY_LICENSES.md`](./THIRD_PARTY_LICENSES.md), and the bundled Pierre Auger data license text is provided in [`licenses/PAO_LICENSE.txt`](./licenses/PAO_LICENSE.txt).
