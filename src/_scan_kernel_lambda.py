@@ -49,16 +49,16 @@ def _scan_center(energies, separation, azimuthal, directions, Ecuts,
     Returns
     -------
     tuple
-        (best_tau, best_p, best_E, best_dir, best_distance, best_width, best_N,
-         neg_tau, neg_p, neg_E, neg_dir, neg_distance, neg_width, neg_N,
+        (best_lambda, best_p, best_E, best_dir, best_distance, best_width, best_N,
+         neg_lambda, neg_p, neg_E, neg_dir, neg_distance, neg_width, neg_N,
          scan_count)
     """
     # Energies and separations have been cut for maximum 90 deg distance around the 
     # scan center. Process wedge correlation center using event energies, separations, 
     # azimuthal angles, and possible wedge directions, energy cuts, widths, distances.
 
-    # Initialize wedge parameters for the best (lowest) p-value |tau|>0
-    best_tau = 0.0
+    # Initialize wedge parameters for the best (lowest) p-value |Lambda|>0
+    best_lambda = 0.0
     best_p = 1.0
     best_E = np.nan
     best_dir = np.nan
@@ -67,8 +67,8 @@ def _scan_center(energies, separation, azimuthal, directions, Ecuts,
     best_N = 0
     scan_count = 0
 
-    # Best scan constrained to tau < 0
-    neg_tau = 0.0
+    # Best scan constrained to Lambda < 0
+    neg_lambda = 0.0
     neg_p = 1.0
     neg_E = np.nan
     neg_dir = np.nan
@@ -173,14 +173,16 @@ def _scan_center(energies, separation, azimuthal, directions, Ecuts,
 
                     # Lundquist's Lambda correlation optimized with Numba
                     # Returns Lambda correlation and two-sided p-value (Lambda=0 null)
-                    t_lambda, t_p, _, _, _, _, _ = lambda_corr_nb(E_final, D_final, n_d, 
-                                                                 ptype='approx')
+                    # Pass exact-length slices to avoid exposing uninitialized tail
+                    # values in scratch buffers to native lambda_corr implementations.
+                    t_lambda, t_p, _, _, _, _, _ = lambda_corr_nb(
+                        E_final[:n_d], D_final[:n_d], n_d, ptype='approx')
 
                     scan_count += 1.0
 
-                    # Absolute tau scan used in supergalactic structure paper.
+                    # Absolute Lambda scan used in supergalactic structure paper.
                     # If p-value is smaller scan is better. If p-value is the same, 
-                    # greater absolute value tau is better.
+                    # greater absolute value Lambda is better.
                     if (t_p < best_p) or (
                         (t_p == best_p) and (abs(t_lambda) >= abs(best_lambda))):
                         best_p = t_p
@@ -191,10 +193,10 @@ def _scan_center(energies, separation, azimuthal, directions, Ecuts,
                         best_width = width_cut
                         best_N = n_d # Final number of events in wedge
 
-                    # Negative tau only scan. Largely, only sigma significance is 
+                    # Negative Lambda only scan. Largely, only sigma significance is 
                     # interesting in regards to it's supergalactic symmetry.
-                    # If p-value is smaller for tau<0 scan is better. If p-value is the 
-                    # same, more negative tau is better.
+                    # If p-value is smaller for Lambda<0 scan is better. If p-value is the 
+                    # same, more negative Lambda is better.
                     if ((t_p < neg_p) and (t_lambda < 0.0)) or (
                         (t_p == neg_p) and (t_lambda <= neg_lambda)):
                         neg_p = t_p

@@ -12,14 +12,15 @@ from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 from astropy import units as u
 
-from _scan_kernel import _scan_center
+from _scan_kernel import _scan_center as _scan_center_tau
+from _scan_kernel_lambda import _scan_center as _scan_center_lambda
 
 def _prepare_scan_inputs(grid, events, energy, Ecut, max_distance):
     # Lowest energy cut
     events = events[energy >= Ecut]
     energies = energy[energy >= Ecut].astype(np.float32)
     
-    # Initial sort necessary for fastest possible scan_center scan.
+    # Initial sort required for hyper_corr's kendalltau_ties and kendalltau_noties.
     ind = np.argsort(energies)
     events = events[ind]
     energies = energies[ind]
@@ -44,29 +45,39 @@ def _prepare_scan_inputs(grid, events, energy, Ecut, max_distance):
 # --- Scan kernel orchestration ---
 
 def _run_scan(grid_size, event_mask, energies, separation, azimuthal_list,
-                    directions, Ecuts, widths, distances, minN, num_workers):
+                    directions, Ecuts, widths, distances, minN, num_workers,
+                    stat='tau'):
+    stat = str(stat).strip().lower()
+    if stat == 'tau':
+        scan_center = _scan_center_tau
+    elif stat == 'lambda':
+        scan_center = _scan_center_lambda
+    else:
+        raise ValueError(f"Invalid statistic: {stat}")
+
     # Runs scan_center_unpack(args) once per grid point in parallel threads, using 
     # ex.map(...). tqdm wraps iterator for progress bar while all centers are scanned.
     args = _iter_scan_args(grid_size, event_mask, energies, separation, azimuthal_list,
-                            directions, Ecuts, widths, distances, minN)
+                            directions, Ecuts, widths, distances, minN, scan_center)
     with ThreadPoolExecutor(max_workers=num_workers) as ex:
         return list(tqdm(ex.map(_scan_unpack, args),
                          total=grid_size, smoothing=0.2))
 
 
 def _scan_unpack(args):
-    # Unpack the arguments and call the scan_center function for multiprocessing.
-    return _scan_center(*args)
+    # Unpack the selected kernel and call it for one scan center.
+    scan_center, scan_args = args
+    return scan_center(*scan_args)
 
 
 def _iter_scan_args(grid_size, event_mask, energies, separation, azimuthal_list,
-                     directions, Ecuts, widths, distances, minN):
+                     directions, Ecuts, widths, distances, minN, scan_center):
     # Loops over every grid point (for i in range(grid.size)) and builds argument tuple 
     # for that center
     for i in range(grid_size):
         m = event_mask[i] # boolean mask selecting which events belong to center (i)
-        yield (energies[m], separation[i, m], azimuthal_list[i],
-               directions, Ecuts, widths, distances, minN)
+        yield (scan_center, (energies[m], separation[i, m], azimuthal_list[i],
+               directions, Ecuts, widths, distances, minN))
 
 
 # --- Scan results unpacking into super_corr ---

@@ -197,15 +197,15 @@ def _scan_center(energies, separation, azimuthal, directions, Ecuts,
 
                     # Duplicate checks only when full center set had duplicates.
                     if energy_dup0:
-                        energy_dup = _sorted_dups(
-                            energies, idx_d, n_d
-                        )
+                        energy_dup = _sorted_dups(energies, idx_d, n_d)
+                        
                     else:
                         energy_dup = False
 
                     # Duplicate checks only when full center set had duplicates.
                     if dist_dup0:
                         dist_dup = _unsorted_dups(separation, idx_d, n_d)
+
                     else:
                         dist_dup = False
 
@@ -213,9 +213,10 @@ def _scan_center(energies, separation, azimuthal, directions, Ecuts,
                     # Returns tau correlation and two-sided p-value (tau=0 null)
                     if energy_dup or dist_dup:
                         t_tau, t_p = kendalltau_ties(E_final[:n_d], D_final[:n_d], n_d)
+
                     else:
                         t_tau, t_p = kendalltau_noties(E_final[:n_d], D_final[:n_d], 
-                                                      n_d)
+                                                       n_d)
 
                     scan_count += 1.0
 

@@ -10,23 +10,27 @@ import matplotlib.pyplot as plt
 import numpy as np
 import astropy.units as u
 from astropy.coordinates import SkyCoord, Angle
-from matplotlib.colors import Normalize, LinearSegmentedColormap, ListedColormap
+from matplotlib.colors import Normalize, ListedColormap
 from matplotlib.colors import to_rgba
-import colorsys
 import healpy as hp
 from matplotlib.collections import PolyCollection
+import warnings
+# This warning is raised by the Hammer projection and does not always occur even for the
+# exact same data.
+warnings.filterwarnings(
+    "ignore",
+    message="invalid value encountered in sqrt",
+    category=RuntimeWarning,
+    module=r"matplotlib\.projections\.geo"
+)
 
-import _new_cm
-
-plt.ion()
+from _cmaps import _get_cmap
 
 def _map_supergalactic(sgl, sgb, x0=None, y0=None, ipix=None, nside=None, c_title=None, 
                       title=None, proj='tete', savefig=1, arrows=False, multiplet=False, 
                       c=None, s=0.5, marker='o', color=None, cmap='viridis', file=None, 
-                      dirs=None, B=None, arrow_len=0.02):
-    
-    if cmap=='sigma':
-        cmap = _new_cm.extended_cmap
+                      dirs=None, B=None, arrow_len=0.02, show=True):
+    cmap = _get_cmap(cmap)
 
     sgl, sgb = _make_Angle(sgl,sgb)
 
@@ -95,10 +99,12 @@ def _map_supergalactic(sgl, sgb, x0=None, y0=None, ipix=None, nside=None, c_titl
     _plot_great_circle(gal_line, ax, color='blue', linewidth=1)
     
     if savefig and (file is not None):
-        plt.savefig(file, dpi=600, format='png')
-
-    plt.show(block=False)
-    plt.pause(0.001)
+        fig.savefig(file, dpi=600, format='png')
+    if show:
+        plt.show(block=False)
+        plt.pause(0.001)
+    else:
+        plt.close(fig)
     
     return
 
@@ -123,32 +129,7 @@ def _map_wrap(lon, center=180*u.deg):
 
 def _healpix_polygons(ax, nside, ipix, values, frame='tete', proj='supergalactic',
                       cmap='viridis', step=1, center=180*u.deg):
-    if cmap=='tau':
-        hues = {'yellow':60/360, 'cyan':180/360, 'red':0/360, 'blue':240/360}
-        L_high, L_low, S = 0.85, 0.35, 1.0
-        yellow = colorsys.hls_to_rgb(hues['yellow'], L_high, S)
-        cyan   = colorsys.hls_to_rgb(hues['cyan'],   L_high, S)
-        red    = colorsys.hls_to_rgb(hues['red'],    L_low,  S)
-        blue   = colorsys.hls_to_rgb(hues['blue'],   L_low,  S)
-        
-        vmin, vmax = -1,  1
-        zero    = -vmin/(vmax-vmin)
-        neg_mid = zero/2
-        pos_mid = (zero+1)/2
-        
-        cmap = LinearSegmentedColormap.from_list(
-            "C–B–K–R–Y",
-            [
-                (0.0,     yellow),
-                (neg_mid, red),
-                (zero,    (0,0,0)),
-                (pos_mid, blue),
-                (1.0,     cyan),
-            ]
-        )
-        
-    elif cmap=='sigma':
-        cmap = _new_cm.extended_cmap
+    cmap = _get_cmap(cmap)
         
     ipix = np.asarray(ipix, dtype=np.int64)
     npix = ipix.size
@@ -315,30 +296,7 @@ def _shade_outside_dec_cut(ax, dec_lim_deg, proj='supergalactic',
 def _map_scatter(x, y, x0=None, y0=None, c_title=None, c=None, s=0.5, marker='o', 
                  color=None, cmap='viridis', arrows=False, multiplet=False, dirs=None, 
                  B=None, arrow_len=0.02):
-    
-    if cmap=='tau':
-        hues = {'yellow':60/360, 'cyan':180/360, 'red':0/360, 'blue':240/360}
-        L_high, L_low, S = 0.85, 0.35, 1.0
-        yellow = colorsys.hls_to_rgb(hues['yellow'], L_high, S)
-        cyan   = colorsys.hls_to_rgb(hues['cyan'],   L_high, S)
-        red    = colorsys.hls_to_rgb(hues['red'],    L_low,  S)
-        blue   = colorsys.hls_to_rgb(hues['blue'],   L_low,  S)
-        
-        vmin, vmax = -1,  1
-        zero    = -vmin/(vmax-vmin)
-        neg_mid = zero/2
-        pos_mid = (zero+1)/2
-        
-        cmap = LinearSegmentedColormap.from_list(
-            "C–B–K–R–Y",
-            [
-                (0.0,     yellow),
-                (neg_mid, red),
-                (zero,    (0,0,0)),
-                (pos_mid, blue),
-                (1.0,     cyan),
-            ]
-        )
+    cmap = _get_cmap(cmap)
 
     x = _map_wrap(x)
     fig, ax = _set_fig()

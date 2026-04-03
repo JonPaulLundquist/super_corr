@@ -13,11 +13,23 @@ from astropy import units as u
 
 # --- Scan parameters and grid ---
 
-def _build_scan_params():
+def _build_scan_params(stat='tau'):
+    stat = str(stat).strip().lower()
+    if stat == 'tau':
+        # Lower bound energy cut: maximizes tau supergalactic curvature for Auger Open Data. 
+        min_Ecut = 13    # 10 EeV in original TA paper.
+        Ecuts = np.arange(10,75,5) # 75/80 EeV never results in maximum significant scan.
+
+    elif stat == 'lambda':
+        # Lower bound energy cut: maximizes lambda supergalactic curvature for Auger Open Data. 
+        min_Ecut = 16    # 10 EeV in original TA paper.
+        Ecuts = np.arange(15,75,5) # 75/80 EeV never results in maximum significant scan.
+        
+    else:
+        raise ValueError(f"Invalid statistic: {stat}")
+
     minN = 6 # Minimum number of events in a wedge
-    # Lower bound energy cut: maximizes tau supergalactic curvature for Auger Open Data. 
-    min_Ecut = 13    # 10 EeV in original TA paper.
- 
+
     # Original Paper Scan parameters
     # distances = np.arange(15, 95, 5)[::-1]
     # widths = np.arange(10, 95, 5)[::-1] / 2 
@@ -28,7 +40,6 @@ def _build_scan_params():
     distances = np.arange(14, 92, 2)[::-1]
     widths = np.arange(4, 92, 2)[::-1] / 2
     directions = np.arange(0,360,2)
-    Ecuts = np.arange(10,75,5) # 75/80 EeV never results in maximum significant scan.
     
     # Many NumPy operations (and lots of C/Numba code) are fastest on contiguous arrays.
     distances = distances.astype(np.float32, order='C')

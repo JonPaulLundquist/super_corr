@@ -8,10 +8,11 @@ Created on Tue May 20 18:16:18 2025
 
 import numpy as np
 from scipy.optimize import linprog
+from scipy.optimize import least_squares
 from scipy.stats import binned_statistic
 from numba import njit, prange
 
-def _parabola_fit(b, y, members, stat='Mean', bin_edges=None, method='wls'):
+def _parabola_fit(b, y, members, stat='Mean', bin_edges=None, method='rotated'):
     y = np.asarray(y, float)
     b = np.asarray(b, float)
 
@@ -25,37 +26,43 @@ def _parabola_fit(b, y, members, stat='Mean', bin_edges=None, method='wls'):
 
     n, _, _ = binned_statistic(b, y, statistic="count", bins=bin_edges)
     b_center, _, _ = binned_statistic(b, b, statistic="median",  bins=bin_edges)
-    
+
     if stat == 'Mean':
-        y_stat, _, _ = binned_statistic(b, y, statistic="mean",  bins=bin_edges)       
+        y_stat, _, _ = binned_statistic(b, y, statistic="mean",  bins=bin_edges)
         y_stat2, y_se, n_wedges_bin, n_ind_mean, n_ind_std = _binned_independent_se(
             lat=b, tau=y, members=members, bin_edges=bin_edges,
             stat="mean", n_trials=5000, rng=12345, min_wedges=10)
-        
+
     elif stat == 'Median':
         y_stat, _, _ = binned_statistic(b, y, statistic="median",  bins=bin_edges)
         y_stat2, y_se, n_wedges_bin, n_ind_mean, n_ind_std = _binned_independent_se(
             lat=b, tau=y, members=members, bin_edges=bin_edges,
             stat="median", n_trials=5000, rng=12345, min_wedges=10)
-        
+
     else:
         print('Not Implemented')
-        
+
     good = np.isfinite(b_center) & np.isfinite(y_stat) & (n > 0)
 
     if method == 'wls':
-        popt, R2_adj = _wls_fit(b_center[good], y_stat[good], sigma=y_se)
+        popt, R2_adj = _wls_fit(b_center[good], y_stat[good], sigma=y_se[good])
+        fit_meta = {'method': 'wls'}
 
     elif method == 'lad':
-        popt, R2_adj = _lad_fit(b_center[good], y_stat[good], sigma=y_se)
+        popt, R2_adj = _lad_fit(b_center[good], y_stat[good], sigma=y_se[good])
+        fit_meta = {'method': 'lad'}
 
     elif method == 'bisquare':
-        popt, R2_adj = _bisquare_fit(b_center[good], y_stat[good], sigma=y_se)
+        popt, R2_adj = _bisquare_fit(b_center[good], y_stat[good], sigma=y_se[good])
+        fit_meta = {'method': 'bisquare'}
+
+    elif method == 'rotated':
+        popt, R2_adj, fit_meta = _rotated_fit(b_center[good], y_stat[good], sigma=y_se[good])
         
     else:
         raise ValueError(f"Method {method} not implemented")
 
-    return popt, R2_adj, b_center, y_stat, y_se
+    return popt, R2_adj, b_center, y_stat, y_se, fit_meta
 
 
 # Estimate the uncertainty of the statistic using independent set resampling.
@@ -355,6 +362,7 @@ def _lad_fit(x, y, sigma=None):
     
     return popt, R2_adj
 
+# Fit y = a*x^2 + b*x + c using WLS
 # def wls_fit(x, y, sigma=None):
 #     x = np.asarray(x, np.float64)
 #     y = np.asarray(y, np.float64)
@@ -462,6 +470,153 @@ def _weighted_adj_r2(y, y_pred, w, p):
 
     R2_adj = 1 - (1 - R2) * (n - 1) / (n - p)
     return R2_adj
+
+
+def _continuous_branch_mask(x, t1, t2, y1, y2):
+    """Pick a smooth branch across sorted x for plotting predictions."""
+    if x.size <= 1:
+        return np.abs(t1) <= np.abs(t2)
+
+    order = np.argsort(x)
+    t1o, t2o = t1[order], t2[order]
+    y1o, y2o = y1[order], y2[order]
+    xo = x[order]
+
+    use1o = np.zeros_like(xo, dtype=bool)
+    k0 = int(np.argmin(np.abs(xo)))
+    use1o[k0] = np.abs(t1o[k0]) <= np.abs(t2o[k0])
+    yprev = y1o[k0] if use1o[k0] else y2o[k0]
+
+    for k in range(k0 + 1, xo.size):
+        use1o[k] = abs(y1o[k] - yprev) <= abs(y2o[k] - yprev)
+        yprev = y1o[k] if use1o[k] else y2o[k]
+
+    yprev = y1o[k0] if use1o[k0] else y2o[k0]
+    for k in range(k0 - 1, -1, -1):
+        use1o[k] = abs(y1o[k] - yprev) <= abs(y2o[k] - yprev)
+        yprev = y1o[k] if use1o[k] else y2o[k]
+
+    use1 = np.zeros_like(use1o)
+    use1[order] = use1o
+    return use1
+
+
+def _rotated_predict_y(x, params, y_ref=None):
+    """
+    Predict y(x) for rotated parabola in raw (x, y) coordinates.
+
+    Parametric model around vertex (0, y0):
+      x = cos(theta)*t - sin(theta)*a*t^2
+      y = y0 + sin(theta)*t + cos(theta)*a*t^2
+    """
+    a, y0, theta = params
+    x = np.asarray(x, dtype=np.float64)
+    ct, st = np.cos(theta), np.sin(theta)
+    eps = 1e-12
+
+    if abs(st) < eps:
+        return y0 + a * x**2
+
+    # Solve (a*sin(theta)) t^2 - cos(theta) t + x = 0
+    A = a * st
+    B = -ct
+    C = x
+
+    y_out = np.full_like(x, np.nan, dtype=np.float64)
+    if abs(A) < eps:
+        # Near-linear case in t.
+        t = -C / (B if abs(B) > eps else 1.0)
+        y_out[:] = y0 + st * t + ct * a * t*t
+        return y_out
+
+    disc = B*B - 4.0*A*C
+    ok = disc >= 0.0
+    if not np.any(ok):
+        return y_out
+
+    sq = np.sqrt(np.maximum(disc[ok], 0.0))
+    den = 2.0 * A
+
+    t1 = (-B + sq) / den
+    t2 = (-B - sq) / den
+
+    y1 = y0 + st * t1 + ct * a * t1*t1
+    y2 = y0 + st * t2 + ct * a * t2*t2
+
+    if y_ref is None:
+        use1 = _continuous_branch_mask(x[ok], t1, t2, y1, y2)
+    else:
+        y_ref_ok = np.asarray(y_ref, dtype=np.float64)[ok]
+        use1 = np.abs(y1 - y_ref_ok) <= np.abs(y2 - y_ref_ok)
+
+    y_out[ok] = np.where(use1, y1, y2)
+    return y_out
+
+
+def _rotated_residuals(params, x, y, sigma):
+    y_pred = _rotated_predict_y(x, params, y_ref=y)
+    # Penalize unreachable x values (no real branch).
+    bad = ~np.isfinite(y_pred)
+    resid = (y - y_pred) / sigma
+    resid[bad] = 1e6
+    return resid
+
+
+def _rotated_fit(x, y, sigma=None):
+    x = np.asarray(x, np.float64)
+    y = np.asarray(y, np.float64)
+    mask = np.isfinite(x) & np.isfinite(y)
+    if sigma is not None:
+        sigma = np.asarray(sigma, np.float64)
+        mask &= np.isfinite(sigma) & (sigma > 0)
+
+    x = x[mask]
+    y = y[mask]
+    if sigma is not None:
+        sigma = sigma[mask]
+        w = 1.0 / sigma**2
+    else:
+        w = np.ones_like(y)
+        sigma = np.ones_like(y)
+
+    if x.size < 3:
+        raise ValueError("Rotated fit requires at least 3 valid binned points.")
+
+    # Initial guess from weighted centered quadratic y = a*x^2 + y0.
+    X0 = np.column_stack((x*x, np.ones_like(x)))
+    sw = np.sqrt(w)
+    beta0, *_ = np.linalg.lstsq(X0 * sw[:, None], y * sw, rcond=None)
+    a0 = float(beta0[0])
+    y0_guess = float(beta0[1])
+    p0 = np.array([a0, y0_guess, 0.0], dtype=np.float64)
+
+    yspan = max(np.nanmax(y) - np.nanmin(y), 1e-3)
+    xspan = max(np.nanmax(x) - np.nanmin(x), 1.0)
+    a_scale = yspan / (xspan * xspan)
+    alim = max(1e-6, 20.0 * max(abs(a0), a_scale))
+    bounds_lo = np.array([-alim, np.nanmin(y) - yspan, -np.deg2rad(70.0)])
+    bounds_hi = np.array([ alim, np.nanmax(y) + yspan,  np.deg2rad(70.0)])
+    res = least_squares(
+        _rotated_residuals, p0, args=(x, y, sigma),
+        bounds=(bounds_lo, bounds_hi), method='trf',
+        ftol=1e-10, xtol=1e-10, gtol=1e-10, max_nfev=20000
+    )
+    p = res.x
+
+    yhat = _rotated_predict_y(x, p, y_ref=y)
+    R2_adj = _weighted_adj_r2(y, yhat, w, p=3)
+
+    a = p[0]
+    y0 = p[1]
+    popt = np.array([a, y0], dtype=np.float64)
+    fit_meta = {
+        'method': 'rotated',
+        'params': p,
+        'theta_rad': float(p[2]),
+        'theta_deg': float(np.rad2deg(p[2])),
+        'y0': float(y0),
+    }
+    return popt, R2_adj, fit_meta
 
 
 def _tukey_bisquare_weights(u):

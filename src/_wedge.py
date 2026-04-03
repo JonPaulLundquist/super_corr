@@ -9,6 +9,7 @@ Created on Fri Mar 20 02:37:12 2026
 import numpy as np
 from scipy.stats import siegelslopes
 from lambda_corr import lambda_corr
+from hyper_corr import kendalltau
 
 def _wedge(events, energies, center, Dir, W, E_cut, Dist):
     # Create a wedge of events with energy >= E_cut, angular width <= W, and angular 
@@ -72,3 +73,19 @@ def _lambda_and_siegel(events, energies, grid, Dir, W, E, Dist):
         SS[i] = slope/(0.5*10**2) # Energies are EeV. This results in Mpc*nG.
 
     return lambdas, SS
+
+def _tau_and_siegel(events, energies, grid, Dir, W, E, Dist):
+    # tau correlation in wedges from Lambda correlation scan.
+    taus = np.zeros(len(grid))
+    SS = np.zeros(len(grid))
+    for i in range(len(grid)):
+        inside, sep = _wedge(events, energies, grid[i], Dir[i], W[i], E[i], Dist[i])
+        taus[i], *_ = kendalltau(energies[inside], sep, pvals=False)
+        
+        # Calculate Z*S*B magnetic field estimate using median-of-medians robust slope 
+        # estimate of distance vs 1/E.
+        res = siegelslopes(sep, 1/(energies[inside]))
+        slope = res.slope
+        SS[i] = slope/(0.5*10**2) # Energies are EeV. This results in Mpc*nG.
+
+    return taus, SS

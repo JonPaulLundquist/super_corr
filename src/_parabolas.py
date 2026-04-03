@@ -13,154 +13,182 @@ from _parabola_fit import _parabola_fit
 
 # --- Parabola figures and Test Statistic Calculations ---
 
-def _parabola_figures(grid, tau, members, lambdas, neg_sigma, SS, result_path):
+def _parabola_figures(grid, corr, members, corr2, neg_sigma, SS, result_path,
+                      stat='tau', fit_method='rotated', show=True):
+    stat = str(stat).strip().lower()
+    if stat == 'tau':
+        primary_symbol = r'\tau'
+        secondary_symbol = r'\Lambda'
+        primary_file = 'Tau'
+        secondary_file = 'Lambda'
+        secondary_name = 'lambda'
+    elif stat == 'lambda':
+        primary_symbol = r'\Lambda'
+        secondary_symbol = r'\tau'
+        primary_file = 'Lambda'
+        secondary_file = 'Tau'
+        secondary_name = 'tau'
+    else:
+        raise ValueError(f"Invalid statistic: {stat}")
+
     sgb = grid.sgb.deg
-    # Figure of Mean tau in equal solid angle bins of supergalactic latitude (SGB) for 
-    # abs(tau) scan. 
-    # popt[0] is the parameter used to test supergalactic structure significance.
+    # Figure of Mean tau/Lambda in equal solid angle bins of supergalactic latitude 
+    # (SGB) for abs(tau/Lambda) scan. 
+    # popt_mean[0] is the parameter used to test supergalactic structure significance.
     bin_edges = _default_lat_bin_edges(sgb, n_bins=20)
     
-    popt_mean, R2_mean, bin_edges = _parabola_fig(sgb, tau, members, 
-        result_path+'SuperCorr_MeanTau', ylim=(-1,1), stat='Mean', bin_edges=bin_edges,
-        title=(r"$\mathbf{\langle \tau \rangle}$ from Max. $\mathbf{\sigma}$ Scan "
-               r"($\mathbf{|\tau| > 0}$)"))
+    popt_mean, R2_mean, bin_edges = _parabola_fig(
+        sgb, corr, members, result_path+f'SuperCorr_Mean{primary_file}',
+        ylim=(-1,1), stat='Mean', varname=rf'$\mathbf{{{primary_symbol}}}$',
+        bin_edges=bin_edges, fit_method=fit_method, show=show,
+        title=(rf"$\mathbf{{\langle {primary_symbol} \rangle}}$ from Max. "
+               rf"$\mathbf{{\sigma}}$ Scan "
+               rf"($\mathbf{{|{primary_symbol}| > 0}}$)"))
     
     # a is close to paper's test statistic of supergalactic structure of correlations
-    # Fit y = a*x^2+c instead of y = a*x^2 + b*x + c to penalize <tau> minimum off 0 SGB
+    # Fit y = a*x^2+c instead of y = a*x^2 + b*x + c to penalize <tau/Lambda> minimum 
+    # off 0 SGB
     a_mean, _ = popt_mean
     # Convert to rad^-2 for a larger number for supergalactic structure test statistic.
     print(f"Supergalactic Curvature Test Statistic a={a_mean*(180/np.pi)**2:.3f}") 
     print(f"R²_adj: {R2_mean:3f}")
     
-    # Figure of Median tau in equal solid angle bins of supergalactic latitude (sgb) for 
-    # abs(tau) scan. This popt[0] parameter could also be used to test significance.
-    popt_med, R2_median, _ = _parabola_fig(sgb, tau, members, 
-        result_path+'SuperCorr_MedianTau', ylim=(-1,1), stat='Median', 
-        bin_edges=bin_edges, title=(r"median($\mathbf{\tau}$) from Max. "
-                                    r"$\mathbf{\sigma}$ Scan ($\mathbf{|\tau| > 0}$)"))
+    # Figure of Median tau/Lambda in equal solid angle bins of supergalactic latitude 
+    # (SGB) for abs(tau/Lambda) scan.
+    popt_med, R2_median, _ = _parabola_fig(
+        sgb, corr, members, result_path+f'SuperCorr_Median{primary_file}',
+        ylim=(-1,1), stat='Median', varname=rf'$\mathbf{{{primary_symbol}}}$',
+        bin_edges=bin_edges, fit_method=fit_method, show=show,
+        title=(rf"median($\mathbf{{{primary_symbol}}}$) from Max. "
+               rf"$\mathbf{{\sigma}}$ Scan ($\mathbf{{|{primary_symbol}| > 0}}$)"))
 
     a_med, _ = popt_med
     # Convert to rad^-2 for a larger number for supergalactic structure test statistic.
-    print(f"Supergalactic Curvature Test Statistic "
+    print(f"Supergalactic Curvature Statistic "
           f"a_median={a_med*(180/np.pi)**2:.3f}") 
     print(f"R²_adj: {R2_median:3f}")
 
-    # Mean Lambda in equal solid angle bins of SGB for wedges given by abs(tau) scan. 
-    popt_lambda, R2_lambda, _ = _parabola_fig(sgb, lambdas, members, 
-        result_path+'SuperCorr_MeanLambda', ylim=(-1,1), stat='Mean', 
-        varname=r'$\mathbf{\Lambda}$', bin_edges=bin_edges, 
-        title=(r"$\mathbf{\langle \Lambda \rangle}$ from Max. "
-               r"$\mathbf{\sigma}$ Scan ($\mathbf{|\tau| > 0}$)"))
+    # Mean secondary statistic in equal solid angle bins of SGB for wedges given by 
+    # primary statistic abs(tau/Lambda) scan.
+    popt_corr2, R2_corr2, _ = _parabola_fig(
+        sgb, corr2, members, result_path+f'SuperCorr_Mean{secondary_file}',
+        ylim=(-1,1), stat='Mean', varname=rf'$\mathbf{{{secondary_symbol}}}$',
+        bin_edges=bin_edges, fit_method=fit_method, show=show,
+        title=(rf"$\mathbf{{\langle {secondary_symbol} \rangle}}$ from Max. "
+               rf"$\mathbf{{\sigma}}$ Scan ($\mathbf{{|{primary_symbol}| > 0}}$)"))
 
-    a_lambda, _ = popt_lambda
+    a_corr2, _ = popt_corr2
     
     # Convert to rad^-2 for a larger number for supergalactic structure test statistic.
-    print(f"Supergalactic Curvature Statistic a_lambda={a_lambda*(180/np.pi)**2:.3f}") 
-    print(f"R²_adj: {R2_lambda:3f}")
+    print(f"Supergalactic Curvature Statistic "
+          f"a_{secondary_name}={a_corr2*(180/np.pi)**2:.3f}")
+    print(f"R²_adj: {R2_corr2:3f}")
 
-    # Mean Lambda in equal solid angle bins of SGB for wedges given by abs(tau) scan. 
-    popt_med_lambda, R2_med_lambda, _ = _parabola_fig(sgb, lambdas, members, 
-        result_path+'SuperCorr_MedianLambda', ylim=(-1,1), stat='Median', 
-        varname=r'$\mathbf{\Lambda}$', bin_edges=bin_edges, 
-        title=(r"median($\mathbf{\Lambda}$) from Max. "
-               r"$\mathbf{\sigma}$ Scan ($\mathbf{|\tau| > 0}$)"))
+    # Median secondary statistic in equal solid angle bins of SGB for wedges given by 
+    # primary statistic abs(tau/Lambda) scan.
+    popt_med_corr2, R2_med_corr2, _ = _parabola_fig(
+        sgb, corr2, members, result_path+f'SuperCorr_Median{secondary_file}',
+        ylim=(-1,1), stat='Median', varname=rf'$\mathbf{{{secondary_symbol}}}$',
+        bin_edges=bin_edges, fit_method=fit_method, show=show,
+        title=(rf"median($\mathbf{{{secondary_symbol}}}$) from Max. "
+               rf"$\mathbf{{\sigma}}$ Scan ($\mathbf{{|{primary_symbol}| > 0}}$)"))
 
-    a_med_lambda, _ = popt_med_lambda
+    a_med_corr2, _ = popt_med_corr2
     
-    print(f"Supergalactic Curvature Test Statistic "
-          f"a_med_lambda={a_med_lambda*(180/np.pi)**2:.3f}") 
-    print(f"R²_adj: {R2_med_lambda:3f}")
-
-    # Mean sigma from abs(tau) scan for wedges with tau<0.
-    #_, _, _ = _parabola_fig(sgb[tau<0], sigma[tau<0], members[tau<0], 
-    #    result_path+'SuperCorr_MeanSigma', stat='Mean', varname=r'$\mathbf{\sigma}$', 
-    #    ylim=(3.4,4.6), bin_edges=bin_edges,
-    #    title=r"$\mathbf{\langle \sigma \rangle}$ from Max. "
-    #          r"$\mathbf{\sigma}$ Scan ($\mathbf{|\tau| > 0}$) for $\mathbf{\tau < 0}$")
+    print(f"Supergalactic Curvature Statistic "
+          f"a_med_{secondary_name}={a_med_corr2*(180/np.pi)**2:.3f}")
+    print(f"R²_adj: {R2_med_corr2:3f}")
     
-    # Mean sigma from tau<0 maximum sigma scan. 
+    # Mean sigma from tau/Lambda<0 maximum sigma scan. 
     # Also, a supergalactic structure indicator.
     popt_neg_sigma, R2_neg_sigma, _ = _parabola_fig(sgb, neg_sigma, members, 
-        result_path+'SuperCorr_MeanNegSigma', ylim=(3.2,4.3), stat='Mean', 
-        varname=r'$\mathbf{\sigma}$', bin_edges=bin_edges,
+        result_path+'SuperCorr_MeanNegSigma', ylim='sigma', stat='Mean', 
+        varname=r'$\mathbf{\sigma}$', bin_edges=bin_edges, fit_method=fit_method,
+        show=show,
         title=(r"$\mathbf{\langle \sigma \rangle}$ from Max. $\mathbf{\sigma}$ Scan "
-               r"($\mathbf{\tau < 0}$)"))
+               rf"($\mathbf{{{primary_symbol} < 0}}$)"))
 
-    # Median sigma from tau<0 maximum sigma scan. 
+    # Median sigma from tau/Lambda<0 maximum sigma scan. 
     # Also, a supergalactic structure indicator.
     popt_med_neg_sigma, R2_med_neg_sigma, _ = _parabola_fig(sgb, neg_sigma, members, 
-        result_path+'SuperCorr_MedianNegSigma', ylim=(3.2,4.3), stat='Median', 
-        varname=r'$\mathbf{\sigma}$', bin_edges=bin_edges,
+        result_path+'SuperCorr_MedianNegSigma', ylim='sigma', stat='Median', 
+        varname=r'$\mathbf{\sigma}$', bin_edges=bin_edges, fit_method=fit_method,
+        show=show,
         title=(r"median($\mathbf{\sigma}$) from Max. $\mathbf{\sigma}$ Scan "
-               r"($\mathbf{\tau < 0}$)"))
+               rf"($\mathbf{{{primary_symbol} < 0}}$)"))
 
-    # Mean Siegel slope from abs(tau) scan. A strong correlation does not necessarily 
-    # correspond to a strong magnetic field (or slope of distance vs 1/E).
+    # Mean Siegel slope from abs(tau/Lambda) scan. A strong correlation does not 
+    # necessarily correspond to a strong magnetic field (or slope of distance vs 1/E).
     # Also, a supergalactic structure indicator.
     popt_siegel, R2_siegel, _ = _parabola_fig(sgb, SS, members, 
         result_path+'SuperCorr_MeanSiegel', stat='Mean', varname='Siegel Slope', 
-        ylim=(-50,30), bin_edges=bin_edges,
+        ylim='siegel', bin_edges=bin_edges, fit_method=fit_method, show=show,
         title=r"Mean Siegel Slopes: Distance vs 1/E ($\mathbf{\sigma}$ Scan "
-              r"$\mathbf{|\tau| > 0}$)")
+              rf"$\mathbf{{|{primary_symbol}| > 0}}$)")
     
-    # Median Siegel slope from abs(tau) scan. A strong correlation does not necessarily 
-    # correspond to a strong magnetic field (or slope of distance vs 1/E).
+    # Median Siegel slope from abs(tau/Lambda) scan. A strong correlation does not 
+    # necessarily correspond to a strong magnetic field (or slope of distance vs 1/E).
     # Also, a supergalactic structure indicator.
     popt_med_siegel, R2_med_siegel, _ = _parabola_fig(sgb, SS, members, 
-        result_path+'SuperCorr_MedianSiegel', stat='Median', varname='Siegel Slope', 
-        ylim=(-30,30), bin_edges=bin_edges,
+        result_path+'SuperCorr_MedianSiegel', stat='Median', varname='Siegel Slope',
+        ylim='siegel', bin_edges=bin_edges, fit_method=fit_method, show=show,
         title=r"Median Siegel Slopes: Distance vs 1/E ($\mathbf{\sigma}$ Scan "
-              r"$\mathbf{|\tau| > 0}$)")
+              rf"$\mathbf{{|{primary_symbol}| > 0}}$)")  
 
-    # Mean tau in equal solid angle bins of Galactic latitude (b) for abs(tau) scan.
-    popt_galactic, R2_galactic, _ = _parabola_fig(sgb, tau, members, 
-        result_path+'SuperCorr_MeanTau_Galactic', grid=grid, proj='Galactic', 
-        ylim=(-1,1),
-        title=(r"$\mathbf{\langle \tau \rangle}$ from Max. $\mathbf{\sigma}$ Scan "
-               r"($\mathbf{|\tau| > 0}$"))
+    # Mean primary statistic in equal solid angle bins of Galactic latitude (b) for 
+    # abs(tau/Lambda) scan.
+    popt_galactic, R2_galactic, _ = _parabola_fig(
+        sgb, corr, members, result_path+f'SuperCorr_Mean{primary_file}_Galactic',
+        grid=grid, proj='Galactic', ylim=(-1,1),
+        varname=rf'$\mathbf{{{primary_symbol}}}$',
+        fit_method=fit_method, show=show,
+        title=(rf"$\mathbf{{\langle {primary_symbol} \rangle}}$ from Max. "
+               rf"$\mathbf{{\sigma}}$ Scan "
+               rf"($\mathbf{{|{primary_symbol}| > 0}}$)"))
 
     a_galactic, _ = popt_galactic
     print(f"Galactic Curvature Statistic a_galactic={a_galactic*(180/np.pi)**2:.3f}") 
     print(f"R²_adj: {R2_galactic:3f}")
 
-    return (popt_mean, R2_mean, popt_med, R2_median, popt_lambda, R2_lambda,
-            popt_med_lambda, R2_med_lambda, popt_neg_sigma, R2_neg_sigma,
+    return (popt_mean, R2_mean, popt_med, R2_median, popt_corr2, R2_corr2,
+            popt_med_corr2, R2_med_corr2, popt_neg_sigma, R2_neg_sigma,
             popt_med_neg_sigma, R2_med_neg_sigma, popt_siegel, R2_siegel,
             popt_med_siegel, R2_med_siegel, popt_galactic, R2_galactic)
 
 
-def _parabola_stats(grid, tau, members, lambdas, neg_sigma, SS):
+def _parabola_stats(grid, corr, members, corr2, neg_sigma, SS, fit_method='rotated'):
     """Compute parabola-fit statistics without creating any figures."""
     sgb = np.asarray(grid.sgb.deg)
     bin_edges = _default_lat_bin_edges(sgb, n_bins=20)
 
     popt_mean, R2_mean, *_ = _parabola_fit(
-        sgb, tau, members, stat='Mean', bin_edges=bin_edges, method='wls')
+        sgb, corr, members, stat='Mean', bin_edges=bin_edges, method=fit_method)
     popt_med, R2_median, *_ = _parabola_fit(
-        sgb, tau, members, stat='Median', bin_edges=bin_edges, method='wls')
-    popt_lambda, R2_lambda, *_ = _parabola_fit(
-        sgb, lambdas, members, stat='Mean', bin_edges=bin_edges, method='wls')
-    popt_med_lambda, R2_med_lambda, *_ = _parabola_fit(
-        sgb, lambdas, members, stat='Median', bin_edges=bin_edges, method='wls')
+        sgb, corr, members, stat='Median', bin_edges=bin_edges, method=fit_method)
+    popt_corr2, R2_corr2, *_ = _parabola_fit(
+        sgb, corr2, members, stat='Mean', bin_edges=bin_edges, method=fit_method)
+    popt_med_corr2, R2_med_corr2, *_ = _parabola_fit(
+        sgb, corr2, members, stat='Median', bin_edges=bin_edges, method=fit_method)
 
     popt_neg_sigma, R2_neg_sigma, *_ = _parabola_fit(
-        sgb, neg_sigma, members, stat='Mean', bin_edges=bin_edges, method='wls')
+        sgb, neg_sigma, members, stat='Mean', bin_edges=bin_edges, method=fit_method)
     popt_med_neg_sigma, R2_med_neg_sigma, *_ = _parabola_fit(
-        sgb, neg_sigma, members, stat='Median', bin_edges=bin_edges, method='wls')
+        sgb, neg_sigma, members, stat='Median', bin_edges=bin_edges, method=fit_method)
 
     popt_siegel, R2_siegel, *_ = _parabola_fit(
-        sgb, SS, members, stat='Mean', bin_edges=bin_edges, method='wls')
+        sgb, SS, members, stat='Mean', bin_edges=bin_edges, method=fit_method)
     popt_med_siegel, R2_med_siegel, *_ = _parabola_fit(
-        sgb, SS, members, stat='Median', bin_edges=bin_edges, method='wls')
+        sgb, SS, members, stat='Median', bin_edges=bin_edges, method=fit_method)
 
     grid_gal = grid.transform_to('galactic')
     b_gal = np.asarray(grid_gal.b.deg)
     bin_edges_gal = _default_lat_bin_edges(b_gal, n_bins=20)
     popt_galactic, R2_galactic, *_ = _parabola_fit(
-        b_gal, tau, members, stat='Mean', bin_edges=bin_edges_gal, method='wls')
+        b_gal, corr, members, stat='Mean', bin_edges=bin_edges_gal,
+        method=fit_method)
 
-    return (popt_mean, R2_mean, popt_med, R2_median, popt_lambda, R2_lambda,
-            popt_med_lambda, R2_med_lambda, popt_neg_sigma, R2_neg_sigma,
+    return (popt_mean, R2_mean, popt_med, R2_median, popt_corr2, R2_corr2,
+            popt_med_corr2, R2_med_corr2, popt_neg_sigma, R2_neg_sigma,
             popt_med_neg_sigma, R2_med_neg_sigma, popt_siegel, R2_siegel,
             popt_med_siegel, R2_med_siegel, popt_galactic, R2_galactic)
 
