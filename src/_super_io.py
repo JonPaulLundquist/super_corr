@@ -14,6 +14,14 @@ from astropy import units as u
 
 from _iso_MC_Auger import _iso_MC_Auger
 
+
+def _normalize_stat(stat):
+    stat = str(stat).strip().lower()
+    if stat not in {"tau", "lambda"}:
+        raise ValueError(f"Invalid statistic: {stat}")
+    return stat
+
+
 # --- Data loading ---
 
 def _load_input_events(input_type, data_path, seed=None):

@@ -23,7 +23,6 @@ Created on Tue Mar 11 17:04:57 2025
 """
 
 import numpy as np
-from tqdm import tqdm
 import os
 import gc
 from pathlib import Path
@@ -31,11 +30,13 @@ from pathlib import Path
 from _scan_driver import _run_scan, _unpack_results, _prepare_scan_inputs
 from _scan_params import _build_scan_params, _build_scan_grid
 from _super_io import (_get_project_paths, _load_input_events, _save_results,
-                       _next_mc_dir)
+                       _next_mc_dir, _normalize_stat)
 from _super_io import _load_results
 from _map_figures import _multiplet_figure, _map_figures
 from _wedge import _wedge_members, _siegel_slopes, _lambda_and_siegel, _tau_and_siegel
 from _parabolas import _parabola_figures, _parabola_stats
+from mc_trials import (merge_mc_trial_shards, mc_pvalues, run_mc_trials,
+                       run_mc_trials_shard) 
 
 # --- Main analysis ---
 
@@ -164,436 +165,11 @@ def super_corr(input_type='data', make_figures=True, save_npz=True, result_path=
     if save_npz:
         _save_results(result_path, **results_out)
 
-# --- Garbage collection necessary for threads and memory management ---
+    # --- Garbage collection necessary for threads and memory management ---
     for _ in range(3):
         gc.collect()
-    
+
     return results_out
-
-
-def run_mc_trials(n_trials, out_path=None, seed=None, stat='tau',
-                  fit_method='rotated'):
-    """Run isotropic MC trials and save per-trial a, y0, and R2.
-
-    All saved arrays are float32 for compact storage.
-    """
-    stat = _normalize_stat(stat)
-    _, result_path = _get_project_paths(stat=stat)
-    if out_path is None:
-        out_path = str(Path(result_path) / "mc_trials.npz")
-    out_path = Path(out_path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    n_add = int(n_trials)
-    if n_add < 0:
-        raise ValueError("n_trials must be >= 0.")
-
-    dt = np.float32
-
-    common_keys = [
-        "a_mean", "a_median", "a_neg_sigma", "a_med_neg_sigma", "a_siegel",
-        "a_med_siegel", "a_galactic", "y0_mean", "y0_median", "y0_neg_sigma",
-        "y0_med_neg_sigma", "y0_siegel", "y0_med_siegel", "y0_galactic",
-        "R2_mean", "R2_median", "R2_neg_sigma", "R2_med_neg_sigma", "R2_siegel",
-        "R2_med_siegel", "R2_galactic",
-    ]
-    if stat == "tau":
-        stat_keys = ["a_lambda", "a_med_lambda", "y0_lambda", "y0_med_lambda",
-                     "R2_lambda", "R2_med_lambda"]
-        wrong_stat_key = "a_tau"
-    else:
-        stat_keys = ["a_tau", "a_med_tau", "y0_tau", "y0_med_tau",
-                     "R2_tau", "R2_med_tau"]
-        wrong_stat_key = "a_lambda"
-    all_keys = common_keys + stat_keys
-
-    old_n = 0
-    old = None
-    if out_path.is_file():
-        old = dict(np.load(out_path, allow_pickle=True))
-        if "seed" not in old:
-            raise ValueError(f"Existing MC file missing seed: {out_path}")
-        if wrong_stat_key in old:
-            raise ValueError(
-                f"Existing MC file {out_path} appears to be for a different stat."
-            )
-        base_seed = int(np.asarray(old["seed"]).item())
-        if seed is not None and int(seed) != base_seed:
-            print(
-                f"Note: ignoring provided seed={int(seed)}; continuing with "
-                f"seed={base_seed} from existing file."
-            )
-        if "trial_seeds" not in old:
-            raise ValueError(f"Existing MC file missing trial_seeds: {out_path}")
-        old_n = int(np.asarray(old.get("n_trials", len(old["trial_seeds"]))).item())
-    else:
-        if seed is None:
-            # True random seeding (from OS entropy) for distributed/HPC workflows.
-            base_seed = int(np.random.default_rng().integers(0, 2**32, dtype=np.uint32))
-        else:
-            base_seed = int(seed)
-
-    n_total = old_n + n_add
-    trial_seeds = (base_seed + np.arange(n_total, dtype=np.uint32)).astype(np.uint32)
-
-    arr = {}
-    for k in all_keys:
-        a = np.empty(n_total, dtype=dt)
-        if old is not None:
-            if k not in old:
-                raise ValueError(f"Existing MC file missing required key: {k}")
-            old_arr = np.asarray(old[k], dtype=dt).reshape(-1)
-            if old_arr.size < old_n:
-                raise ValueError(
-                    f"Existing MC file key {k} shorter than n_trials ({old_n})."
-                )
-            a[:old_n] = old_arr[:old_n]
-        arr[k] = a
-
-    def _build_out(n_done):
-        out = dict(n_trials=n_done, seed=base_seed, trial_seeds=trial_seeds[:n_done])
-        out.update({k: arr[k][:n_done] for k in common_keys})
-        out.update({k: arr[k][:n_done] for k in stat_keys})
-        return out
-
-    mode = "append" if old_n > 0 else "new"
-    print(
-        f"MC trials ({stat}) {mode}: old_n={old_n}, add_n={n_add}, "
-        f"new_total={n_total}, seed={base_seed}, out={out_path}"
-    )
-
-    for i in tqdm(range(old_n, n_total), total=n_add, smoothing=0.2):
-        # Headless, do-not-save scan.
-        res = super_corr(input_type='iso', make_figures=False, save_npz=False,
-                         seed=int(trial_seeds[i]), stat=stat,
-                         fit_method=fit_method)
-
-        for k in common_keys:
-            arr[k][i] = res[k]
-
-        # Save the total results to a .npz file after each trial in case of HPC preemption
-        # or other interruption.
-        for k in stat_keys:
-            arr[k][i] = res[k]
-
-        n_done = i + 1
-        np.savez_compressed(out_path, **_build_out(n_done))
-
-    # If no new trials were requested, keep/initialize a consistent output file.
-    if n_add == 0:
-        np.savez_compressed(out_path, **_build_out(old_n))
-
-    return str(out_path)
-
-
-# Display order for mc_pvalues() output (blank line between groups).
-def _normalize_stat(stat):
-    stat = str(stat).strip().lower()
-    if stat not in {"tau", "lambda"}:
-        raise ValueError(f"Invalid statistic: {stat}")
-    return stat
-
-
-def _mc_pvalue_config(stat):
-    stat = _normalize_stat(stat)
-    if stat == "tau":
-        ge_keys = {"a_mean", "a_median", "a_lambda", "a_med_lambda"}
-        order_groups = (
-            ("a_mean", "a_lambda"),
-            ("a_neg_sigma", "a_siegel"),
-            ("a_median", "a_med_lambda", "a_med_neg_sigma", "a_med_siegel"),
-            ("a_galactic",),
-        )
-    else:
-        ge_keys = {"a_mean", "a_median", "a_tau", "a_med_tau"}
-        order_groups = (
-            ("a_mean", "a_tau"),
-            ("a_neg_sigma", "a_siegel"),
-            ("a_median", "a_med_tau", "a_med_neg_sigma", "a_med_siegel"),
-            ("a_galactic",),
-        )
-    return ge_keys, order_groups
-
-
-def mc_pvalues(data_npz=None, mc_npz=None, out_txt=None, stat='tau'):
-    """Compute one-sided MC p-values for each curvature parameter a_*.
-
-    Denominator is every MC trial. The extreme-event count includes a trial only if
-    the tail is satisfied and R^2 > 0 for the matching parabola (same suffix as a_*,
-    e.g. a_mean <-> R2_mean). Trials with R^2 <= 0 still count toward the denominator
-    but not toward the numerator.
-
-    Tail directions (numerator uses tail & R2>0):
-      - a_mean, a_median, a_lambda/tau, a_med_lambda/tau: count #(a_mc >= a_data & R2>0)
-      - others (currently 5)                     : count #(a_mc <= a_data & R2>0)
-    """
-    stat = _normalize_stat(stat)
-    _, result_path = _get_project_paths(stat=stat)
-    if data_npz is None:
-        data_npz = Path(result_path) / "super_corr.npz"
-
-    else:
-        data_npz = Path(data_npz)
-
-    if mc_npz is None:
-        mc_npz = Path(result_path) / "mc_trials.npz"
-
-    else:
-        mc_npz = Path(mc_npz)
-
-    if out_txt is None:
-        out_txt = Path(result_path) / "mc_pvalues.txt"
-
-    else:
-        out_txt = Path(out_txt)
-
-    data = _load_results(data_npz)
-    mc = dict(np.load(mc_npz, allow_pickle=True))
-    trial_seeds_mc = np.asarray(mc.get("trial_seeds", []), dtype=np.uint32).reshape(-1)
-
-    ge_keys, order_groups = _mc_pvalue_config(stat)
-
-    a_keys = sorted(k for k in mc.keys() if k.startswith("a_") and k in data)
-    if not a_keys:
-        raise ValueError(
-            "No shared curvature keys starting with 'a_' found between "
-            f"{data_npz} and {mc_npz}."
-        )
-
-    unknown = [k for k in a_keys if k not in ge_keys and k != "a_neg_sigma"
-               and k != "a_med_neg_sigma" and k != "a_siegel" and k != "a_med_siegel"
-               and k != "a_galactic"]
-
-    if unknown:
-        raise ValueError(
-            "Unknown a_* keys for tail selection: "
-            + ", ".join(unknown)
-            + ". Update mc_pvalues() tail rules."
-        )
-
-    n_trials_raw = int(mc.get("n_trials", len(mc[a_keys[0]])))
-
-    # Build a per-trial signature from all a_* and R2_* arrays and keep only
-    # unique samples. This guards against duplicated trials when combining runs
-    # done in different places/times (with or without seeds).
-    sig_keys = sorted(
-        k for k in mc.keys()
-        if (k.startswith("a_") or k.startswith("R2_"))
-        and np.asarray(mc[k]).reshape(-1).size >= n_trials_raw
-    )
-    unique_mask = np.ones(n_trials_raw, dtype=bool)
-    duplicate_summary = None
-    if sig_keys and n_trials_raw > 0:
-        sig_mat = np.empty((n_trials_raw, len(sig_keys)), dtype=np.float64)
-        for j, k in enumerate(sig_keys):
-            sig_mat[:, j] = np.asarray(mc[k], dtype=np.float64).reshape(-1)[:n_trials_raw]
-        row_bytes = np.ascontiguousarray(sig_mat).view(
-            np.dtype((np.void, sig_mat.dtype.itemsize * sig_mat.shape[1]))
-        ).reshape(-1)
-        _, unique_idx = np.unique(row_bytes, return_index=True)
-        unique_idx = np.sort(unique_idx)
-        if unique_idx.size < n_trials_raw:
-            unique_mask[:] = False
-            unique_mask[unique_idx] = True
-            duplicate_summary = (
-                f"Warning: detected {n_trials_raw - unique_idx.size} duplicated MC "
-                f"samples ({n_trials_raw} total, {unique_idx.size} unique). "
-                "Using unique samples only for p-value calculations."
-            )
-    n_trials = int(np.sum(unique_mask))
-
-    lines = []
-    lines.append(f"data_file: {data_npz}")
-    lines.append(f"mc_file:   {mc_npz}")
-    lines.append(f"n_trials:  {n_trials}")
-    lines.append(f"stat:      {stat}")
-    if duplicate_summary is not None:
-        lines.append(duplicate_summary)
-        print(duplicate_summary)
-    lines.append("")
-    lines.append("  - Preferred test statistic: a_mean (likeliest to be the most " 
-                 "informative single metric).")
-    lines.append("  - In general, mean-based parameters are likelier to be useful than " 
-                 "median-based variants.")
-    lines.append("    The median has large error bars that are difficult to "
-                 "calculate accurately due to the oversampling nature of the analysis.")
-    lines.append("  - Galactic curvature is reported to show that it is not " 
-                 "significant.")
-    lines.append("")
-    deg2_factor = (180.0 / np.pi) ** 2
-
-    lines.append("p-values (one-sided):")
-    lines.append("  - p = count / n_MC. All trials count in n_MC; adj. R^2>0 trials " 
-    "add to count.")
-    lines.append("  - Reported a_data and a_mc values are in rad^-2.")
-    if stat == "tau":
-        lines.append("  - a_mean, a_median, a_lambda, a_med_lambda:  count = "
-                     "#(a_mc >= a_data & R^2>0)")
-    else:
-        lines.append("  - a_mean, a_median, a_tau, a_med_tau:  count = "
-                     "#(a_mc >= a_data & R^2>0)")
-    lines.append("  - a_neg_sigma, a_med_neg_sigma, a_siegel, a_med_siegel, a_galactic:"
-                 "  count = #(a_mc <= a_data & R^2>0)")
-    lines.append("  - All passing MC trials are listed as (a_mc, seed).")
-    lines.append("")   
-    lines.append("Full run with: python src/super_corr.py --iso --seed <seed> for "
-                 "all variables and figures.")
-    lines.append("")
-
-    # Order: mean/lambda, neg_sigma/siegel, median variants, galactic.
-    ordered_keys = []
-    for gi, group in enumerate(order_groups):
-        present = [k for k in group if k in a_keys]
-        if not present:
-            continue
-        if ordered_keys:
-            ordered_keys.append(None)  # blank line between groups
-        ordered_keys.extend(present)
-
-    # Any shared a_* keys not listed above (should not happen for standard outputs).
-    listed = {k for g in order_groups for k in g}
-    extras = sorted(k for k in a_keys if k not in listed)
-    if extras:
-        if ordered_keys:
-            ordered_keys.append(None)
-        ordered_keys.extend(extras)
-
-    for entry in ordered_keys:
-        if entry is None:
-            lines.append("")
-            continue
-
-        k = entry
-        a_data = float(np.asarray(data[k]).squeeze())
-        a_mc = np.asarray(mc[k], dtype=float)
-        if a_mc.ndim != 1:
-            a_mc = a_mc.reshape(-1)
-        if a_mc.size < n_trials_raw:
-            raise ValueError(
-                f"MC file {mc_npz} has {a_mc.size} entries for {k}, expected at least "
-                f"{n_trials_raw}."
-            )
-        a_mc = a_mc[:n_trials_raw][unique_mask]
-
-        r2_key = "R2_" + k[2:]  # a_mean -> R2_mean, a_med_lambda -> R2_med_lambda
-
-        r2_mc = np.asarray(mc[r2_key], dtype=float)
-        if r2_mc.ndim != 1:
-            r2_mc = r2_mc.reshape(-1)
-        if r2_mc.size < n_trials_raw:
-            raise ValueError(
-                f"MC file {mc_npz} has {r2_mc.size} entries for {r2_key}, expected at "
-                f"least {n_trials_raw}."
-            )
-        r2_mc = r2_mc[:n_trials_raw][unique_mask]
-        if r2_mc.size != a_mc.size:
-            raise ValueError(
-                f"Length mismatch: {k} has {a_mc.size} trials, {r2_key} has "
-                f"{r2_mc.size}."
-            )
-
-        pass_mask = r2_mc > 0
-        n_pass_r2 = int(np.sum(pass_mask))
-        n_all = int(a_mc.size)
-
-        if k in ge_keys:
-            tail_mask = (a_mc >= a_data) & pass_mask
-            count = int(np.sum(tail_mask))
-            tail = ">="
-
-        else:
-            tail_mask = (a_mc <= a_data) & pass_mask
-            count = int(np.sum(tail_mask))
-            tail = "<="
-
-        idx_tail = np.where(tail_mask)[0]
-
-        if n_all > 0:
-            p = float(count / n_all)
-            a_data_rad2 = a_data * deg2_factor
-            lines.append(
-                f"{k:16s}  tail {tail}  a_data={a_data_rad2: .6e}  p={p:.6g}  "
-                f"({count}/{n_all} MC trials; {n_pass_r2} with adj.R^2>0)"
-            )
-            if count > 0 and trial_seeds_mc.size >= n_trials_raw:
-                trial_seeds_used = trial_seeds_mc[:n_trials_raw][unique_mask]
-                if k in ge_keys:
-                    order = np.argsort(-a_mc[idx_tail])
-                else:
-                    order = np.argsort(a_mc[idx_tail])
-                sorted_idx = idx_tail[order]
-                lines.append("  tail_trials:")
-                for j in sorted_idx:
-                    lines.append(
-                        f"    (a_mc = {a_mc[j] * deg2_factor: .6e}, seed = "
-                        f"{int(trial_seeds_used[j])})"
-                    )
-
-        else:
-            a_data_rad2 = a_data * deg2_factor
-            lines.append(
-                f"{k:16s}  tail {tail}  a_data={a_data_rad2: .6e}  p=nan  "
-                f"(0 MC trials)"
-            )
-
-    out_txt.parent.mkdir(parents=True, exist_ok=True)
-
-    # Histogram of MC a_mean in rad^-2 with data value marker.
-    import matplotlib.pyplot as plt
-
-    a_data_mean_rad2 = data["a_mean"] * deg2_factor
-    a_mc_mean_rad2 = (
-        np.asarray(mc["a_mean"], dtype=float).reshape(-1)[:n_trials_raw][unique_mask]
-        * deg2_factor
-    )
-    a_mc_mean_rad2 = a_mc_mean_rad2[np.isfinite(a_mc_mean_rad2)]
-
-    if a_mc_mean_rad2.size > 0:
-        fig, ax = plt.subplots(figsize=(8, 6))
-        counts, _, _ = ax.hist(
-            a_mc_mean_rad2, bins=20, color="blue", alpha=0.8,
-            edgecolor="black", linewidth=0.7,
-            label=r"MC $\mathbf{a}$  [$\mathbf{rad}^{-2}$]"
-        )
-        
-        all_a_rad2 = np.concatenate((a_mc_mean_rad2, np.atleast_1d(a_data_mean_rad2)))
-        lo = np.floor(np.min(all_a_rad2) / 0.1) * 0.1
-        hi = np.ceil(np.max(all_a_rad2) / 0.1) * 0.1
-        lim = max(abs(lo), abs(hi))
-        xlim = (-lim,lim)
-        ax.set_xlim(xlim)
-        y_max = int(np.max(counts))
-        y_top = int(np.ceil(max(y_max, 1) / 10.0) * 10)
-        ax.set_ylim(0, y_top)
-        a_data_label = f"{a_data_mean_rad2:.3f}"
-        ax.axvline(a_data_mean_rad2, color="red", linewidth=2.0,
-                   label=rf"Data $\mathbf{{a}}=\mathbf{{{a_data_label}}}\ "
-                         rf"\mathbf{{rad}}^{{-2}}$")
-
-        ax.set_xlabel(r"$\mathbf{a}$  [$\mathbf{rad}^{-2}$]",
-                      fontweight="semibold", size=18)
-        ax.set_ylabel("Count", fontweight="semibold", size=18)
-        ax.set_title(r"MC Trials Test Statistic '$\mathbf{a}$'",
-                     y=1.04, fontweight="semibold", size=18)
-
-        for tlabel in ax.get_xticklabels() + ax.get_yticklabels():
-            tlabel.set_fontweight("semibold")
-            tlabel.set_fontsize(14)
-
-        for spine in ax.spines.values():
-            spine.set_linewidth(1.1)
-
-        ax.legend(prop={"weight": "semibold", "size": 15})
-
-        hist_file = out_txt.with_name("a_mean_hist.png")
-        fig.savefig(hist_file, dpi=600)
-        plt.close(fig)
-        lines.append("")
-        lines.append(f"Saved histogram: {hist_file}")
-
-    out_txt.write_text("\n".join(lines) + "\n")
-    print("\n".join(lines))
-    return str(out_txt)
 
 
 def redo_figures(filepath=None, result_path=None, stat='tau', fit_method='rotated',
@@ -775,13 +351,22 @@ if __name__ == "__main__":
         help="Output path for MC statistics .npz "
              "(default: results/<stat>/mc_trials.npz).")
 
+    parser.add_argument("--mc-shard", action="store_true",
+        help="MPI distributed MC (requires mpi4py): launch with mpirun/srun. Uses "
+             "MPI.COMM_WORLD rank/size for trial striding; each rank runs super_corr "
+             "in a loop with per-trial shard checkpoints. Use the same --seed on all "
+             "ranks. Merge with --mc-merge-shards. Not with --mc-trials.")
+
+    parser.add_argument("--mc-merge-shards", nargs="+", default=None, metavar="NPZ",
+        help="Merge shard .npz files into one mc_trials archive; requires --mc-out.")
+
     parser.add_argument("--iso", nargs="?", const=1, default=0, type=int,
         help="Run isotropic MC scan(s) with figures. Optional value sets number "
              "of runs (e.g., --iso 5).")
 
     parser.add_argument("--seed", type=int, default=None,
-        help="Seed for isotropic modes: single-run --iso or --mc-trials base seed. "
-             "If omitted in --mc-trials mode, true random entropy-based seeding is used.")
+        help="Seed for isotropic modes: --iso, --mc-trials base seed, or --mc-shard "
+             "(required when MPI size > 1). If omitted in --mc-trials, OS entropy is used.")
 
     parser.add_argument("--stat", type=str, default="tau", choices=("tau", "lambda"),
         help="Primary scan statistic to use. "
@@ -851,6 +436,38 @@ if __name__ == "__main__":
     elif args.run_pvals:
         mc_pvalues(data_npz=args.data_npz, mc_npz=args.mc_npz,
                    out_txt=args.pvals_out, stat=args.stat)
+
+    elif args.mc_merge_shards is not None:
+        if args.mc_out is None:
+            raise ValueError("--mc-merge-shards requires --mc-out (merged .npz path).")
+        out = merge_mc_trial_shards(
+            args.mc_merge_shards, args.mc_out, stat=args.stat)
+        print(f"Merged MC trial shards to {out}")
+
+    elif args.mc_shard:
+        if args.mc_trials and args.mc_trials > 0:
+            raise ValueError("Use either --mc-trials or --mc-shard, not both.")
+        try:
+            from mpi4py import MPI
+        except ImportError as e:
+            raise ImportError(
+                "Distributed MC (--mc-shard) requires mpi4py. "
+                "Install with: pip install mpi4py"
+            ) from e
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()
+        size = comm.Get_size()
+        if rank == 0:
+            print(f"super_corr MPI MC: COMM_WORLD size = {size}", flush=True)
+        comm.Barrier()
+        run_mc_trials_shard(
+            out_path=args.mc_out,
+            seed=args.seed,
+            stat=args.stat,
+            fit_method=args.fit_method,
+            node_rank=rank,
+            num_nodes=size,
+        )
 
     elif args.mc_trials and args.mc_trials > 0:
         out = run_mc_trials(args.mc_trials, out_path=args.mc_out, seed=args.seed,
